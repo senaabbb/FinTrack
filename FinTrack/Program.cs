@@ -1,6 +1,8 @@
 using FinTrack.Data;
+using FinTrack.ExternalClients;
 using FinTrack.Interfaces;
 using FinTrack.Repostories;
+using FinTrack.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,6 +20,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IStockRepository, StockRepository>();
 builder.Services.AddScoped<IStockPriceRepository, StockPriceRepository>();
 builder.Services.AddScoped<ICurrencyRepository, CurrencyRepository>();
+
+builder.Services.AddHttpClient<IFinnhubClient, FinnhubClient>();
+
+builder.Services.AddScoped<IStockService, StockService>();
+builder.Services.AddScoped<ICurrencyService, CurrencyService>();
 
 var app = builder.Build();
 
