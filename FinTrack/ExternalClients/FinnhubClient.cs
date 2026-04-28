@@ -57,7 +57,58 @@ namespace FinTrack.ExternalClients
                 return null;
             }
         }
+        public async Task<FinnhubCurrencyDto?> GetForexRatesAsync(string baseCurrency)
+        {
+            try
+            {
+                // Finnhub forex endpoint'i premium olduğu için
+                // ExchangeRate-API kullanıyoruz (ücretsiz, kayıt gerektirmez)
+                var url = $"https://open.er-api.com/v6/latest/{baseCurrency.ToUpper()}";
 
+                // Yeni bir HttpClient oluştur — farklı base URL kullanıyoruz
+                using var client = new HttpClient();
+                var response = await client.GetAsync(url);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("ExchangeRate-API request failed for {Currency}. Status: {Status}",
+                        baseCurrency, response.StatusCode);
+                    return null;
+                }
+
+                var json = await response.Content.ReadAsStringAsync();
+
+                // ExchangeRate-API'nin döndüğü JSON yapısı:
+                // { "base_code": "USD", "rates": { "TRY": 32.50, "EUR": 0.92 } }
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                // result: "success" mi kontrol et
+                if (root.GetProperty("result").GetString() != "success")
+                    return null;
+
+                var rates = root.GetProperty("rates");
+                var quoteDict = new Dictionary<string, decimal>();
+
+                // Tüm kurları dictionary'e aktar
+                foreach (var rate in rates.EnumerateObject())
+                {
+                    quoteDict[rate.Name] = rate.Value.GetDecimal();
+                }
+
+                return new FinnhubCurrencyDto
+                {
+                    Base = baseCurrency.ToUpper(),
+                    Quote = quoteDict
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching forex rates for: {Currency}", baseCurrency);
+                return null;
+            }
+        }
+        /*
         public async Task<FinnhubCurrencyDto?> GetForexRatesAsync(string baseCurrency)
         {
             try
@@ -85,6 +136,6 @@ namespace FinTrack.ExternalClients
                 _logger.LogError(ex, "Error fetching forex rates for: {Currency}", baseCurrency);
                 return null;
             }
-        }
+        }*/
     }
 }
