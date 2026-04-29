@@ -1,67 +1,85 @@
-﻿using FinTrack.Interfaces;
+﻿using FinTrack.DTOs;
+using FinTrack.Interfaces;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FinTrack.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/currencies")]
     public class CurrenciesController : ControllerBase
     {
         private readonly ICurrencyService _currencyService;
         private readonly ILogger<CurrenciesController> _logger;
 
-        public CurrenciesController(ICurrencyService currencyService, ILogger<CurrenciesController> logger)
+        public CurrenciesController(
+            ICurrencyService currencyService,
+            ILogger<CurrenciesController> logger)
         {
             _currencyService = currencyService;
             _logger = logger;
         }
 
-        // GET /api/currencies
-        // Kayıtlı tüm döviz kurlarını getir
-        [HttpGet]
-        public async Task<IActionResult> GetAll()
+        /// <summary>
+        /// Lists all previously fetched currency exchange rates
+        /// stored in the local database.
+        /// </summary>
+        // GET /api/currencies/history
+        [HttpGet("history")]
+        public async Task<IActionResult> ListSavedExchangeRates()
         {
-            try
-            {
-                var rates = await _currencyService.GetAllRatesAsync();
-                return Ok(rates);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting all currency rates");
-                return StatusCode(500, "An error occurred while fetching currency rates.");
-            }
+            var rates = await _currencyService.GetAllRatesAsync();
+            return Ok(rates);
         }
 
-        // GET /api/currencies/rate?from=USD&to=TRY
-        // Finnhub'dan döviz kuru çek ve kaydet
-        [HttpGet("rate")]
-        public async Task<IActionResult> GetRate(
+        /// <summary>
+        /// Fetches a live exchange rate from ExchangeRate-API
+        /// for the given currency pair and persists it to the database.
+        /// Example: GET /api/currencies/live-rate?from=USD&to=TRY
+        /// </summary>
+        // GET /api/currencies/live-rate?from=USD&to=TRY
+        [HttpGet("live-rate")]
+        public async Task<IActionResult> FetchAndPersistLiveExchangeRate(
             [FromQuery] string from = "USD",
             [FromQuery] string to = "TRY")
         {
-            // Parametre kontrolü
             if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to))
-                return BadRequest("Both 'from' and 'to' currency codes are required.");
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Both 'from' and 'to' currency codes are required.",
+                    Path = Request.Path
+                });
 
             if (from.ToUpper() == to.ToUpper())
-                return BadRequest("'from' and 'to' currencies cannot be the same.");
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Source and target currencies cannot be the same.",
+                    Detail = $"Received: from={from.ToUpper()}, to={to.ToUpper()}",
+                    Path = Request.Path
+                });
 
-            try
-            {
-                var rate = await _currencyService.FetchAndSaveRateAsync(from, to);
+            if (from.Length != 3 || to.Length != 3)
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Currency codes must be exactly 3 characters.",
+                    Detail = "Use standard ISO 4217 codes such as USD, TRY, EUR, GBP.",
+                    Path = Request.Path
+                });
 
-                if (rate == null)
-                    return NotFound($"Could not fetch rate for {from.ToUpper()}/{to.ToUpper()}. " +
-                        $"Please check the currency codes.");
+            var rate = await _currencyService.FetchAndSaveRateAsync(from, to);
 
-                return Ok(rate);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching rate for {From}/{To}", from, to);
-                return StatusCode(500, "An error occurred while fetching the currency rate.");
-            }
+            if (rate == null)
+                return NotFound(new ErrorResponse
+                {
+                    StatusCode = 404,
+                    Message = $"Could not fetch live rate for {from.ToUpper()}/{to.ToUpper()}.",
+                    Detail = "Please verify the currency codes are valid ISO 4217 codes.",
+                    Path = Request.Path
+                });
+
+            return Ok(rate);
         }
     }
 }

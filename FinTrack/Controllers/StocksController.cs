@@ -5,8 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 namespace FinTrack.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
-    // [controller] otomatik olarak "stocks" olur — sınıf adından türetilir
+    [Route("api/stocks")]
     public class StocksController : ControllerBase
     {
         private readonly IStockService _stockService;
@@ -18,121 +17,133 @@ namespace FinTrack.Controllers
             _logger = logger;
         }
 
-        // GET /api/stocks
-        // Watchlist'teki tüm hisseleri döndür
-        [HttpGet]
-        public async Task<IActionResult> GetAll()
+        /// <summary>
+        /// Retrieves all stocks currently in the watchlist.
+        /// </summary>
+        // GET /api/stocks/watchlist
+        [HttpGet("watchlist")]
+        public async Task<IActionResult> RetrieveWatchlist()
         {
-            try
-            {
-                var stocks = await _stockService.GetAllStocksAsync();
-                return Ok(stocks);
-                // Ok() → HTTP 200 döner
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting all stocks");
-                return StatusCode(500, "An error occurred while fetching stocks.");
-                // 500 → Sunucu hatası — raw exception değil, anlamlı mesaj dön
-            }
+            var stocks = await _stockService.GetAllStocksAsync();
+            return Ok(stocks);
         }
 
-        // POST /api/stocks
-        // Watchlist'e yeni hisse ekle
-        [HttpPost]
-        public async Task<IActionResult> AddStock([FromBody] CreateStockDto dto)
+        /// <summary>
+        /// Adds a new stock to the watchlist by symbol.
+        /// Returns 409 if the stock already exists.
+        /// </summary>
+        // POST /api/stocks/watchlist
+        [HttpPost("watchlist")]
+        public async Task<IActionResult> RegisterStockToWatchlist([FromBody] CreateStockDto dto)
         {
-            // Model validation — zorunlu alanlar boş mu?
             if (string.IsNullOrWhiteSpace(dto.Symbol))
-                return BadRequest("Stock symbol is required.");
-            // BadRequest() → HTTP 400 döner
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Stock symbol is required.",
+                    Path = Request.Path
+                });
+
+            if (dto.Symbol.Length > 10)
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Stock symbol cannot exceed 10 characters.",
+                    Path = Request.Path
+                });
 
             if (string.IsNullOrWhiteSpace(dto.CompanyName))
-                return BadRequest("Company name is required.");
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Company name is required.",
+                    Path = Request.Path
+                });
 
-            try
-            {
-                var stock = await _stockService.AddStockAsync(dto);
-                return CreatedAtAction(nameof(GetAll), new { }, stock);
-                // CreatedAtAction() → HTTP 201 döner (kaynak oluşturuldu)
-            }
-            catch (InvalidOperationException ex)
-            {
-                // Aynı hisse zaten watchlist'te — bunu 409 Conflict olarak dön
-                return Conflict(ex.Message);
-                // Conflict() → HTTP 409 döner
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error adding stock {Symbol}", dto.Symbol);
-                return StatusCode(500, "An error occurred while adding the stock.");
-            }
+            var stock = await _stockService.AddStockAsync(dto);
+
+            return CreatedAtAction(nameof(RetrieveWatchlist), stock);
         }
 
-        // DELETE /api/stocks/{symbol}
-        // Watchlist'ten hisse çıkar
-        [HttpDelete("{symbol}")]
-        public async Task<IActionResult> DeleteStock(string symbol)
+        /// <summary>
+        /// Removes a stock from the watchlist by its symbol.
+        /// Returns 404 if the symbol does not exist in the watchlist.
+        /// </summary>
+        // DELETE /api/stocks/{symbol}/watchlist
+        [HttpDelete("{symbol}/watchlist")]
+        public async Task<IActionResult> RemoveStockFromWatchlist(string symbol)
         {
-            try
-            {
-                var deleted = await _stockService.DeleteStockAsync(symbol);
+            if (string.IsNullOrWhiteSpace(symbol))
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Stock symbol is required.",
+                    Path = Request.Path
+                });
 
-                if (!deleted)
-                    return NotFound($"Stock '{symbol}' not found in watchlist.");
-                // NotFound() → HTTP 404 döner
+            var deleted = await _stockService.DeleteStockAsync(symbol);
 
-                return NoContent();
-                // NoContent() → HTTP 204 döner (başarılı, dönecek içerik yok)
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error deleting stock {Symbol}", symbol);
-                return StatusCode(500, "An error occurred while deleting the stock.");
-            }
+            if (!deleted)
+                return NotFound(new ErrorResponse
+                {
+                    StatusCode = 404,
+                    Message = $"Stock '{symbol.ToUpper()}' was not found in your watchlist.",
+                    Path = Request.Path
+                });
+
+            return NoContent();
         }
 
-        // GET /api/stocks/{symbol}/price
-        // Finnhub'dan anlık fiyat çek ve kaydet
-        [HttpGet("{symbol}/price")]
-        public async Task<IActionResult> GetPrice(string symbol)
+        /// <summary>
+        /// Fetches the live market price for a stock from Finnhub
+        /// and persists it to the database.
+        /// </summary>
+        // GET /api/stocks/{symbol}/live-price
+        [HttpGet("{symbol}/live-price")]
+        public async Task<IActionResult> FetchAndPersistLivePrice(string symbol)
         {
-            try
-            {
-                var price = await _stockService.FetchAndSavePriceAsync(symbol);
+            if (string.IsNullOrWhiteSpace(symbol))
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Stock symbol is required.",
+                    Path = Request.Path
+                });
 
-                if (price == null)
-                    return NotFound($"Could not fetch price for '{symbol}'. " +
-                        $"Make sure the stock is in your watchlist and the symbol is valid.");
+            var price = await _stockService.FetchAndSavePriceAsync(symbol);
 
-                return Ok(price);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error fetching price for {Symbol}", symbol);
-                return StatusCode(500, "An error occurred while fetching the price.");
-            }
+            if (price == null)
+                return NotFound(new ErrorResponse
+                {
+                    StatusCode = 404,
+                    Message = $"Could not fetch live price for '{symbol.ToUpper()}'.",
+                    Detail = "Ensure the stock is in your watchlist and the symbol is valid.",
+                    Path = Request.Path
+                });
+
+            return Ok(price);
         }
 
-        // GET /api/stocks/analytics/top?count=5
-        // En çok büyüyen N hisseyi getir
-        [HttpGet("analytics/top")]
-        public async Task<IActionResult> GetTopGrowing([FromQuery] int count = 5)
+        /// <summary>
+        /// Returns the top N stocks by growth percentage
+        /// based on persisted price history.
+        /// Requires at least 2 price records per stock.
+        /// </summary>
+        // GET /api/stocks/analytics/top-growing?count=5
+        [HttpGet("analytics/top-growing")]
+        public async Task<IActionResult> RetrieveTopGrowingStocks([FromQuery] int count = 5)
         {
-            // count parametresi mantıklı bir aralıkta mı?
             if (count < 1 || count > 50)
-                return BadRequest("Count must be between 1 and 50.");
+                return BadRequest(new ErrorResponse
+                {
+                    StatusCode = 400,
+                    Message = "Count must be between 1 and 50.",
+                    Path = Request.Path
+                });
 
-            try
-            {
-                var analytics = await _stockService.GetTopGrowingStocksAsync(count);
-                return Ok(analytics);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error getting top growing stocks");
-                return StatusCode(500, "An error occurred while calculating analytics.");
-            }
+            var analytics = await _stockService.GetTopGrowingStocksAsync(count);
+
+            return Ok(analytics);
         }
     }
 }

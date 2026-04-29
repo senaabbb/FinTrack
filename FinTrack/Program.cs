@@ -1,6 +1,7 @@
 using FinTrack.Data;
 using FinTrack.ExternalClients;
 using FinTrack.Interfaces;
+using FinTrack.Middleware;
 using FinTrack.Repostories;
 using FinTrack.Services;
 using Microsoft.EntityFrameworkCore;
@@ -35,6 +36,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+
+app.UseMiddleware<GlobalExceptionHandlerMiddleware>();
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
